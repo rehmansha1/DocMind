@@ -4,26 +4,36 @@ async function parseJsonResponse(response) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error ?? data.message ?? "Request failed");
+    const error = new Error(data.error ?? data.message ?? "Request failed");
+    error.status = response.status;
+    throw error;
   }
 
   return data;
 }
 
-export async function uploadDocument(file, userId, onProgress) {
+export async function uploadDocument(file, userId, onProgress, token = null) {
   const formData = new FormData();
   formData.append("userId", userId);
   console.log(userId, "IN rAG API");
   formData.append("file", file);
 
+  const headers = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
+    headers,
     body: formData,
   });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error ?? "Failed to upload document");
+    const error = new Error(errorData.error ?? "Failed to upload document");
+    error.status = response.status;
+    throw error;
   }
 
   const reader = response.body.getReader();
@@ -67,40 +77,64 @@ export async function uploadDocument(file, userId, onProgress) {
   }
 }
 
-export async function askQuestion(question, userId, history = []) {
+export async function askQuestion(question, userId, history = [], token = null, widgetKey = null) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE_URL}/chat`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       userId: userId || USER_ID,
       question,
       history,
+      widgetKey,
     }),
   });
 
   return parseJsonResponse(response);
 }
 
-export async function fetchDocuments(userId) {
-  const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(userId)}`);
-  return parseJsonResponse(response);
-}
+export async function fetchDocuments(userId, token = null) {
+  const headers = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
 
-export async function deleteDocument(userId, fileName) {
-  const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(userId)}/${encodeURIComponent(fileName)}`, {
-    method: "DELETE",
+  const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(userId)}`, {
+    headers
   });
   return parseJsonResponse(response);
 }
 
-export async function crawlWebsite(url, userId, onProgress) {
+export async function deleteDocument(userId, fileName, token = null) {
+  const headers = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/documents/${encodeURIComponent(userId)}/${encodeURIComponent(fileName)}`, {
+    method: "DELETE",
+    headers
+  });
+  return parseJsonResponse(response);
+}
+
+export async function crawlWebsite(url, userId, onProgress, token = null) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE_URL}/crawl`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       url,
       userId,
@@ -109,7 +143,9 @@ export async function crawlWebsite(url, userId, onProgress) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error ?? "Failed to crawl website");
+    const error = new Error(errorData.error ?? "Failed to crawl website");
+    error.status = response.status;
+    throw error;
   }
 
   const reader = response.body.getReader();
@@ -151,4 +187,25 @@ export async function crawlWebsite(url, userId, onProgress) {
     if (data.error) throw new Error(data.error);
     return data;
   }
+}
+
+export async function getAllowedDomains(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/domains`, {
+    headers: {
+      "Authorization": `Bearer ${token}`
+    }
+  });
+  return parseJsonResponse(response);
+}
+
+export async function saveAllowedDomains(allowed_domains, token) {
+  const response = await fetch(`${API_BASE_URL}/auth/domains`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ allowed_domains })
+  });
+  return parseJsonResponse(response);
 }

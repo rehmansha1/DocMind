@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./LoginPage.css";
-import { login } from "./services/authApi";
+import { login, signup, forgotPassword, updatePassword } from "./services/authApi";
 
 function MailIcon() {
   return (
@@ -100,14 +100,38 @@ function FloatingParticles() {
   );
 }
 
-export default function LoginPage({ onLogin, onSignup, onForgotPassword }) {
+function decodeJwt(token) {
+  try {
+    const base64Url = token.split(".")[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch (err) {
+    console.error("Error decoding JWT:", err);
+    return null;
+  }
+}
+
+export default function LoginPage({ onLogin, onNavigate }) {
+  const [mode, setMode] = useState("login"); // "login", "signup", "forgot", "reset"
   const [email, setEmail] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
+  
+  const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [shaking, setShaking] = useState(false);
+  const [recoveryToken, setRecoveryToken] = useState("");
+  
   const cardRef = useRef(null);
 
   const triggerShake = useCallback(() => {
@@ -115,47 +139,218 @@ export default function LoginPage({ onLogin, onSignup, onForgotPassword }) {
     window.setTimeout(() => setShaking(false), 550);
   }, []);
 
+  // Parse recovery token if present in URL
+  useEffect(() => {
+    const hash = window.location.hash || window.location.search;
+    if (hash) {
+      const params = new URLSearchParams(hash.replace(/^[#?]/, ""));
+      const accessToken = params.get("access_token");
+      const type = params.get("type");
+
+      if (accessToken && (type === "recovery" || hash.includes("recovery"))) {
+        setRecoveryToken(accessToken);
+        setMode("reset");
+        // Clear tokens from address bar
+        window.history.replaceState(null, "", window.location.pathname);
+      } else if (accessToken && (type === "signup" || type === "invite")) {
+        const decoded = decodeJwt(accessToken);
+        if (decoded) {
+          onLogin({
+            id: decoded.sub || decoded.email,
+            email: decoded.email,
+            token: accessToken,
+          });
+          // Clear tokens from address bar
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }
+    }
+  }, [onLogin]);
+
   // Re-trigger entrance animation after shake ends
   useEffect(() => {
     if (!shaking && cardRef.current) {
       cardRef.current.style.animation = "none";
-      // Force reflow
-      void cardRef.current.offsetHeight;
+      void cardRef.current.offsetHeight; // Force reflow
       cardRef.current.style.animation = "";
     }
   }, [shaking]);
 
   const handleSubmit = async () => {
     setError("");
+    setSuccessMessage("");
 
-    if (!email.trim() || !password) {
-      setError("Please enter your email and password.");
-      triggerShake();
-      return;
-    }
+    if (mode === "login") {
+      if (!email.trim() || !password) {
+        setError("Please enter your email and password.");
+        triggerShake();
+        return;
+      }
 
-    if (!/\S+@\S+\.\S+/.test(email)) {
-      setError("Enter a valid email address.");
-      triggerShake();
-      return;
-    }
+      if (!/\S+@\S+\.\S+/.test(email)) {
+        setError("Enter a valid email address.");
+        triggerShake();
+        return;
+      }
 
-    setLoading(true);
+      setLoading(true);
+      try {
+        const res = await login({ email, password, rememberMe });
+        onLogin({
+          ...res.user,
+          token: res.session?.access_token,
+        });
+      } catch (loginError) {
+        setError(loginError.message || "Could not connect to the server. Try again.");
+        triggerShake();
+      } finally {
+        setLoading(false);
+      }
+    } else if (mode === "signup") {
+      if (!email.trim() || !password || !confirmPassword) {
+        setError("All fields are required.");
+        triggerShake();
+        return;
+      }
 
-    try {
-      const user = await login({ email, password, rememberMe });
-      onLogin(user.user);
-    } catch (loginError) {
-      setError(loginError.message || "Could not connect to the server. Try again.");
-      triggerShake();
-    } finally {
-      setLoading(false);
+      if (!/\S+@\S+\.\S+/.test(email)) {
+        setError("Enter a valid email address.");
+        triggerShake();
+        return;
+      }
+
+      if (password.length < 6) {
+        setError("Password must be at least 6 characters.");
+        triggerShake();
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        triggerShake();
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await signup({ email, password });
+        if (res.session) {
+          onLogin({
+            ...res.user,
+            token: res.session.access_token,
+          });
+        } else {
+          setSuccessMessage(res.message || "Registration successful! Please check your email to confirm your account.");
+          setMode("login");
+          setEmail("");
+          setPassword("");
+          setConfirmPassword("");
+        }
+      } catch (signupError) {
+        setError(signupError.message || "Failed to create workspace.");
+        triggerShake();
+      } finally {
+        setLoading(false);
+      }
+    } else if (mode === "forgot") {
+      if (!email.trim()) {
+        setError("Please enter your email address.");
+        triggerShake();
+        return;
+      }
+
+      if (!/\S+@\S+\.\S+/.test(email)) {
+        setError("Enter a valid email address.");
+        triggerShake();
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await forgotPassword({ email });
+        setSuccessMessage(res.message || "Password reset instructions sent. Please check your email.");
+        setMode("login");
+        setEmail("");
+      } catch (forgotError) {
+        setError(forgotError.message || "Failed to send reset email.");
+        triggerShake();
+      } finally {
+        setLoading(false);
+      }
+    } else if (mode === "reset") {
+      if (!password || !confirmPassword) {
+        setError("Please fill in all password fields.");
+        triggerShake();
+        return;
+      }
+
+      if (password.length < 6) {
+        setError("Password must be at least 6 characters.");
+        triggerShake();
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        triggerShake();
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const res = await updatePassword({ password, token: recoveryToken });
+        setSuccessMessage(res.message || "Password updated successfully. You can now log in.");
+        setMode("login");
+        setPassword("");
+        setConfirmPassword("");
+        setRecoveryToken("");
+      } catch (resetError) {
+        setError(resetError.message || "Failed to reset password. Link may be expired or invalid.");
+        triggerShake();
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
   const handleKeyDown = (event) => {
     if (event.key === "Enter") {
       handleSubmit();
+    }
+  };
+
+  const getHeading = () => {
+    switch (mode) {
+      case "signup": return "Create your workspace";
+      case "forgot": return "Reset your password";
+      case "reset": return "Set new password";
+      default: return "Sign in to your workspace";
+    }
+  };
+
+  const getSubtitle = () => {
+    switch (mode) {
+      case "signup": return "Start building your AI-powered knowledge base.";
+      case "forgot": return "Enter your email to receive password reset instructions.";
+      case "reset": return "Choose a strong password for your workspace.";
+      default: return "Ask your documents anything, get instant answers.";
+    }
+  };
+
+  const getButtonText = () => {
+    if (loading) {
+      switch (mode) {
+        case "signup": return "Creating workspace...";
+        case "forgot": return "Sending instructions...";
+        case "reset": return "Updating password...";
+        default: return "Signing in...";
+      }
+    }
+    switch (mode) {
+      case "signup": return "Create workspace";
+      case "forgot": return "Send reset instructions";
+      case "reset": return "Update password";
+      default: return "Sign in";
     }
   };
 
@@ -169,15 +364,15 @@ export default function LoginPage({ onLogin, onSignup, onForgotPassword }) {
         <section
           ref={cardRef}
           className={`login-card${shaking ? " shake" : ""}`}
-          aria-label="Sign in"
+          aria-label={getHeading()}
         >
           <div className="login-card-top">
             <div className="login-logo-row">
               <div className="logo-dot" />
               <span className="login-logo-text">DocMind</span>
             </div>
-            <h1 className="login-heading">Sign in to your workspace</h1>
-            <p className="login-subtitle">Ask your documents anything, get instant answers.</p>
+            <h1 className="login-heading">{getHeading()}</h1>
+            <p className="login-subtitle">{getSubtitle()}</p>
           </div>
 
           <div className="login-card-body">
@@ -188,104 +383,184 @@ export default function LoginPage({ onLogin, onSignup, onForgotPassword }) {
               </div>
             )}
 
-            <label className="login-field">
-              <span className="login-field-label">Email</span>
-              <span className="login-input-wrap">
-                <span className="login-field-icon">
-                  <MailIcon />
-                </span>
-                <input
-                  className="login-input"
-                  type="email"
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
-              </span>
-            </label>
-
-            <div className="login-field">
-              <div className="login-field-row">
-                <label className="login-field-label" htmlFor="login-password">
-                  Password
-                </label>
-                <button className="login-link-button" type="button" onClick={() => onForgotPassword?.()}>
-                  Forgot password?
-                </button>
+            {successMessage && (
+              <div className="login-error-banner" style={{ background: "rgba(74, 222, 128, 0.08)", border: "1px solid rgba(74, 222, 128, 0.2)", color: "#4ade80" }}>
+                <CheckIcon />
+                {successMessage}
               </div>
-              <span className="login-input-wrap">
-                <span className="login-field-icon">
-                  <LockIcon />
+            )}
+
+            {/* Email Field (Login, Signup, Forgot Password) */}
+            {mode !== "reset" && (
+              <label className="login-field">
+                <span className="login-field-label">Email</span>
+                <span className="login-input-wrap">
+                  <span className="login-field-icon">
+                    <MailIcon />
+                  </span>
+                  <input
+                    className="login-input"
+                    type="email"
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={loading}
+                  />
                 </span>
-                <input
-                  id="login-password"
-                  className="login-input has-toggle"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
-                <button
-                  className="login-password-toggle"
-                  type="button"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  onClick={() => setShowPassword((visible) => !visible)}
-                >
-                  {showPassword ? <EyeOffIcon /> : <EyeIcon />}
-                </button>
-              </span>
-            </div>
+              </label>
+            )}
 
-            <button className="login-remember-row" type="button" onClick={() => setRememberMe((checked) => !checked)}>
-              <span className={`login-checkbox${rememberMe ? " checked" : ""}`}>{rememberMe && <CheckIcon />}</span>
-              <span>Keep me signed in</span>
-            </button>
+            {/* Password Field (Login, Signup, Reset Password) */}
+            {mode !== "forgot" && (
+              <div className="login-field">
+                <div className="login-field-row">
+                  <label className="login-field-label" htmlFor="login-password">
+                    {mode === "reset" ? "New Password" : "Password"}
+                  </label>
+                  {mode === "login" && (
+                    <button className="login-link-button" type="button" onClick={() => { setMode("forgot"); setError(""); setSuccessMessage(""); }} disabled={loading}>
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <span className="login-input-wrap">
+                  <span className="login-field-icon">
+                    <LockIcon />
+                  </span>
+                  <input
+                    id="login-password"
+                    className="login-input has-toggle"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={mode === "reset" ? "Enter new password" : "Enter your password"}
+                    autoComplete={mode === "reset" ? "new-password" : "current-password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={loading}
+                  />
+                  <button
+                    className="login-password-toggle"
+                    type="button"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    disabled={loading}
+                  >
+                    {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </span>
+              </div>
+            )}
 
+            {/* Confirm Password Field (Signup, Reset Password) */}
+            {(mode === "signup" || mode === "reset") && (
+              <div className="login-field">
+                <label className="login-field-label" htmlFor="confirm-password">
+                  Confirm Password
+                </label>
+                <span className="login-input-wrap">
+                  <span className="login-field-icon">
+                    <LockIcon />
+                  </span>
+                  <input
+                    id="confirm-password"
+                    className="login-input has-toggle"
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="Confirm your password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={loading}
+                  />
+                  <button
+                    className="login-password-toggle"
+                    type="button"
+                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                    onClick={() => setShowConfirmPassword((visible) => !visible)}
+                    disabled={loading}
+                  >
+                    {showConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </span>
+              </div>
+            )}
+
+            {/* Keep me signed in (Login mode only) */}
+            {mode === "login" && (
+              <button className="login-remember-row" type="button" onClick={() => setRememberMe((checked) => !checked)} disabled={loading}>
+                <span className={`login-checkbox${rememberMe ? " checked" : ""}`}>{rememberMe && <CheckIcon />}</span>
+                <span>Keep me signed in</span>
+              </button>
+            )}
+
+            {/* Submit Button */}
             <button className="login-primary-button" type="button" disabled={loading} onClick={handleSubmit}>
               {loading ? (
                 <>
                   <div className="login-spinner" />
-                  Signing in...
+                  {getButtonText()}
                 </>
               ) : (
                 <>
-                  Sign in
+                  {getButtonText()}
                   <ArrowIcon />
                 </>
               )}
             </button>
 
-            <div className="login-divider">
-              <span />
-              <small>or</small>
-              <span />
-            </div>
+            {/* OAuth Dividers (Login mode only) */}
+            {mode === "login" && (
+              <>
+                <div className="login-divider">
+                  <span />
+                  <small>or</small>
+                  <span />
+                </div>
 
-            <div className="login-oauth-row">
-              <button className="login-oauth-button" type="button">
-                <GoogleIcon />
-                Google
-              </button>
-              <button className="login-oauth-button" type="button">
-                <GithubIcon />
-                GitHub
-              </button>
-            </div>
+                <div className="login-oauth-row">
+                  <button className="login-oauth-button" type="button" disabled={loading}>
+                    <GoogleIcon />
+                    Google
+                  </button>
+                  <button className="login-oauth-button" type="button" disabled={loading}>
+                    <GithubIcon />
+                    GitHub
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="login-card-footer">
-            <span>No account?</span>
-            <button className="login-link-button strong" type="button" onClick={() => onSignup?.()}>
-              Create a workspace
-            </button>
+            {mode === "login" && (
+              <>
+                <span>No account?</span>
+                <button className="login-link-button strong" type="button" onClick={() => { setMode("signup"); setError(""); setSuccessMessage(""); }} disabled={loading}>
+                  Create a workspace
+                </button>
+              </>
+            )}
+            {mode === "signup" && (
+              <>
+                <span>Already have an account?</span>
+                <button className="login-link-button strong" type="button" onClick={() => { setMode("login"); setError(""); setSuccessMessage(""); }} disabled={loading}>
+                  Sign in
+                </button>
+              </>
+            )}
+            {(mode === "forgot" || mode === "reset") && (
+              <button className="login-link-button strong" type="button" onClick={() => { setMode("login"); setError(""); setSuccessMessage(""); }} disabled={loading}>
+                Back to sign in
+              </button>
+            )}
           </div>
         </section>
 
         <div className="login-bottom-meta">
+          <a href="/pricing" onClick={(e) => { e.preventDefault(); onNavigate && onNavigate("/pricing"); }}>Pricing</a>
+          <span>-</span>
           <a href="/privacy">Privacy</a>
           <span>-</span>
           <a href="/terms">Terms</a>

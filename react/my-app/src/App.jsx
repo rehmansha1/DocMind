@@ -6,7 +6,8 @@ import {
   SUGGESTED_QUESTIONS,
 } from "./config";
 import LoginPage from "./LoginPage";
-import { askQuestion, uploadDocument, fetchDocuments, deleteDocument, crawlWebsite } from "./services/ragApi";
+import PricingPage from "./PricingPage";
+import { askQuestion, uploadDocument, fetchDocuments, deleteDocument, crawlWebsite, getAllowedDomains, saveAllowedDomains } from "./services/ragApi";
 import { createDocumentFromFile, formatBytes, formatTime, getFileExtension } from "./utils/files";
 
 const STATUS_COPY = {
@@ -456,7 +457,16 @@ function Sidebar({
    USER DROPDOWN
    ═══════════════════════════════════════════ */
 
-function UserDropdown({ user, onSignOut }) {
+function CreditCardIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <line x1="2" y1="10" x2="22" y2="10" />
+    </svg>
+  );
+}
+
+function UserDropdown({ user, onSignOut, onNavigate }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -504,6 +514,17 @@ function UserDropdown({ user, onSignOut }) {
             {displayEmail && <div className="user-dropdown-email">{displayEmail}</div>}
           </div>
           <button
+            className="user-dropdown-item"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onNavigate("/pricing");
+            }}
+          >
+            <CreditCardIcon />
+            Pricing Plans
+          </button>
+          <button
             className="user-dropdown-item danger"
             type="button"
             onClick={() => {
@@ -524,16 +545,195 @@ function UserDropdown({ user, onSignOut }) {
    HEADER ACTIONS
    ═══════════════════════════════════════════ */
 
-function HeaderActions({ messagesCount, onClearChat, onOpenSidebar, readyCount, user, onSignOut, mobile = false }) {
+function CodeIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
+  );
+}
+
+function EmbedModal({ isOpen, onClose, email, token }) {
+  const [activeTab, setActiveTab] = useState("iframe");
+  const [copied, setCopied] = useState(false);
+  const [allowedDomains, setAllowedDomains] = useState("");
+  const [widgetKey, setWidgetKey] = useState("");
+  const [saveStatus, setSaveStatus] = useState("");
+  
+  // Load allowed domains when modal opens
+  useEffect(() => {
+    if (isOpen && token) {
+      getAllowedDomains(token)
+        .then((res) => {
+          if (res.success) {
+            setAllowedDomains(res.allowed_domains || "");
+            setWidgetKey(res.widget_key || "");
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load allowed domains:", err);
+        });
+    }
+  }, [isOpen, token]);
+
+  const handleSaveDomains = async () => {
+    setSaveStatus("Saving...");
+    try {
+      await saveAllowedDomains(allowedDomains, token);
+      setSaveStatus("Saved successfully!");
+      setTimeout(() => setSaveStatus(""), 2500);
+    } catch (err) {
+      setSaveStatus("Failed: " + err.message);
+      setTimeout(() => setSaveStatus(""), 4000);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const currentOrigin = window.location.origin;
+  const widgetUrl = widgetKey 
+    ? `${currentOrigin}/?widget=true&key=${encodeURIComponent(widgetKey)}`
+    : `${currentOrigin}/?widget=true&email=${encodeURIComponent(email)}`;
+
+  const iframeCode = `<iframe
+  src="${widgetUrl}"
+  width="400"
+  height="600"
+  style="border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
+></iframe>`;
+
+  const scriptCode = `<!-- DocMind Chatbot Widget Embed -->
+<script>
+  (function() {
+    var iframeUrl = "${widgetUrl}";
+    
+    var launcher = document.createElement("div");
+    launcher.id = "docmind-launcher";
+    launcher.style.cssText = "position:fixed;bottom:20px;right:20px;width:60px;height:60px;border-radius:50%;background:#7c6af7;box-shadow:0 4px 16px rgba(124,106,247,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:999999;transition:transform 0.2s;";
+    launcher.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+    
+    var container = document.createElement("div");
+    container.id = "docmind-container";
+    container.style.cssText = "position:fixed;bottom:90px;right:20px;width:400px;height:600px;max-height:calc(100vh - 120px);border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.3);z-index:999999;overflow:hidden;display:none;border:1px solid rgba(255,255,255,0.1);";
+    
+    var iframe = document.createElement("iframe");
+    iframe.src = iframeUrl;
+    iframe.style.cssText = "width:100%;height:100%;border:none;";
+    container.appendChild(iframe);
+    
+    document.body.appendChild(launcher);
+    document.body.appendChild(container);
+    
+    var isOpen = false;
+    launcher.onclick = function() {
+      isOpen = !isOpen;
+      if (isOpen) {
+        container.style.display = "block";
+        launcher.style.transform = "rotate(90deg)";
+        launcher.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+      } else {
+        container.style.display = "none";
+        launcher.style.transform = "none";
+        launcher.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
+      }
+    };
+  })();
+</script>`;
+
+  const codeToCopy = activeTab === "iframe" ? iframeCode : scriptCode;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">Embed AI Chatbot</div>
+          <button className="modal-close-btn" onClick={onClose} aria-label="Close modal">
+            <CloseIcon size={16} />
+          </button>
+        </div>
+        
+        <div className="modal-tabs">
+          <button 
+            className={`modal-tab-btn${activeTab === "iframe" ? " active" : ""}`}
+            onClick={() => { setActiveTab("iframe"); setCopied(false); }}
+          >
+            Inline IFrame
+          </button>
+          <button 
+            className={`modal-tab-btn${activeTab === "script" ? " active" : ""}`}
+            onClick={() => { setActiveTab("script"); setCopied(false); }}
+          >
+            Floating Chat Bubble
+          </button>
+        </div>
+
+        <div className="modal-body">
+          {activeTab === "iframe" ? (
+            <p>Embed the chatbot as a permanent element inside a specific area of your webpage (e.g. your Support or Contact page):</p>
+          ) : (
+            <p>Add a floating support widget in the bottom-right corner of all pages on your website. Paste this code before the closing &lt;/body&gt; tag:</p>
+          )}
+
+          <div className="code-snippet-box">
+            {codeToCopy}
+          </div>
+
+          <button className="modal-copy-btn" onClick={handleCopy} style={{ marginBottom: "20px" }}>
+            {copied ? <CheckSmallIcon /> : <CopyIcon />}
+            {copied ? "Copied!" : "Copy Code Snippet"}
+          </button>
+
+          <div className="modal-settings-group">
+            <label className="modal-settings-label">Allowed Domains (CORS Lock)</label>
+            <p className="modal-settings-desc">
+              Protect your widget from unauthorized embeds. Enter the domains where this widget is allowed to run, separated by commas (e.g. <code>mywebsite.com, localhost</code>). Leave empty to allow all domains.
+            </p>
+            <div className="modal-settings-row">
+              <input
+                type="text"
+                className="modal-settings-input"
+                placeholder="e.g. mywebsite.com, localhost"
+                value={allowedDomains}
+                onChange={(e) => setAllowedDomains(e.target.value)}
+              />
+              <button className="modal-settings-save-btn" onClick={handleSaveDomains}>
+                Save
+              </button>
+            </div>
+            {saveStatus && <span className="modal-settings-status">{saveStatus}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeaderActions({ messagesCount, onClearChat, onOpenSidebar, readyCount, user, onSignOut, onOpenEmbed, isWidgetMode, onNavigate, mobile = false }) {
   return (
     <div className={mobile ? "mobile-actions" : "header-actions"}>
-      <StatusBadge readyCount={readyCount} />
+      {!isWidgetMode && <StatusBadge readyCount={readyCount} />}
+      {!isWidgetMode && user && onOpenEmbed && (
+        <button className="icon-btn" type="button" onClick={onOpenEmbed} aria-label="Embed widget" title="Embed widget">
+          <CodeIcon />
+        </button>
+      )}
       {messagesCount > 0 && (
         <button className="icon-btn" type="button" onClick={onClearChat} aria-label="Clear chat" title="Clear chat">
           <TrashIcon />
         </button>
       )}
-      {user && <UserDropdown user={user} onSignOut={onSignOut} />}
+      {user && !isWidgetMode && <UserDropdown user={user} onSignOut={onSignOut} onNavigate={onNavigate} />}
       {mobile && (
         <button className="hamburger" type="button" onClick={onOpenSidebar} aria-label="Open documents" title="Open documents">
           <span />
@@ -653,14 +853,6 @@ function Message({ message, isLatest, onSelectSuggestion }) {
         <div className="msg-bubble">
           {isAI ? parseMarkdown(message.text) : message.text}
         </div>
-        {message.sources?.length > 0 && (
-          <div className="sources">
-            {message.sources.map((source, index) => (
-              <SourcePill key={`${message.id}-${index}`} source={source} />
-            ))}
-          </div>
-        )}
-        
         {isAI && isLatest && message.suggestions?.length > 0 && (
           <div className="message-suggestions">
             {message.suggestions.map((suggestion, index) => (
@@ -753,6 +945,17 @@ export default function App() {
   const [activeDoc, setActiveDoc] = useState(null);
   const [currentUser, setCurrentUser] = useState(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      const isWidget = params.get("widget") === "true";
+      const widgetEmail = params.get("email");
+      const widgetKey = params.get("key");
+      if (isWidget && (widgetEmail || widgetKey)) {
+        return { 
+          email: widgetEmail ? widgetEmail.trim() : null, 
+          widgetKey: widgetKey ? widgetKey.trim() : null, 
+          isWidget: true 
+        };
+      }
       const saved = localStorage.getItem("docmind_user");
       return saved ? JSON.parse(saved) : null;
     } catch {
@@ -768,8 +971,27 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [crawlUrl, setCrawlUrl] = useState("");
   const [crawling, setCrawling] = useState(false);
+  const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const messagesEndRef = useRef(null);
   const toastTimeoutRef = useRef(null);
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener("popstate", handleLocationChange);
+    return () => {
+      window.removeEventListener("popstate", handleLocationChange);
+    };
+  }, []);
+
+  const navigateTo = useCallback((path) => {
+    window.history.pushState({}, "", path);
+    setCurrentPath(path);
+  }, []);
+
+  const isWidgetMode = currentUser?.isWidget === true;
 
   const readyCount = useMemo(() => docs.filter((doc) => doc.status === "ready").length, [docs]);
   const hasProcessingDocs = useMemo(() => docs.some((doc) => doc.status === "processing"), [docs]);
@@ -784,21 +1006,39 @@ export default function App() {
     setDocs((currentDocs) => currentDocs.map((doc) => (doc.id === id ? { ...doc, ...changes } : doc)));
   }, []);
 
+  const handleSignOut = useCallback(() => {
+    setCurrentUser(null);
+    setMessages([]);
+    setDocs([]);
+    setInput("");
+  }, []);
+
+  const handleApiError = useCallback((error, defaultMsg = "An error occurred") => {
+    if (error.status === 401) {
+      showToast("Session expired. Please sign in again.", "error");
+      handleSignOut();
+    } else {
+      showToast(error.message || defaultMsg, "error");
+    }
+  }, [handleSignOut, showToast]);
+
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem("docmind_user", JSON.stringify(currentUser));
+      if (!currentUser.isWidget) {
+        localStorage.setItem("docmind_user", JSON.stringify(currentUser));
+      }
     } else {
       localStorage.removeItem("docmind_user");
     }
   }, [currentUser]);
 
   const loadUserDocuments = useCallback(async () => {
-    if (!currentUser?.email) {
+    if (!currentUser?.email || currentUser.isWidget) {
       setDocs([]);
       return;
     }
     try {
-      const data = await fetchDocuments(currentUser.email);
+      const data = await fetchDocuments(currentUser.email, currentUser.token);
       if (data.success) {
         const userDocs = (data.documents || []).map((d) => ({
           id: d.name,
@@ -812,13 +1052,27 @@ export default function App() {
       }
     } catch (error) {
       console.error("Failed to fetch user documents:", error);
-      showToast("Failed to load your documents from server.", "error");
+      handleApiError(error, "Failed to load your documents from server.");
     }
-  }, [currentUser?.email, showToast]);
+  }, [currentUser?.email, currentUser?.token, handleApiError]);
 
   useEffect(() => {
     loadUserDocuments();
   }, [loadUserDocuments]);
+
+  useEffect(() => {
+    if (isWidgetMode && messages.length === 0) {
+      setMessages([
+        {
+          id: "welcome-msg",
+          role: "ai",
+          text: "Hello! 👋 I'm your virtual support assistant. How can I help you today?",
+          time: new Date(),
+          suggestions: SUGGESTED_QUESTIONS,
+        },
+      ]);
+    }
+  }, [isWidgetMode, messages.length]);
 
   const handleCrawlSubmit = useCallback(async (e) => {
     e.preventDefault();
@@ -848,7 +1102,7 @@ export default function App() {
           progress: progressData.progress,
           progressMsg: progressData.message,
         });
-      });
+      }, currentUser.token);
 
       showToast(`Website crawled successfully! Scraped ${result.pages} pages.`);
       setDocs((currentDocs) => currentDocs.filter((d) => d.id !== docId));
@@ -856,11 +1110,11 @@ export default function App() {
 
     } catch (error) {
       updateDoc(docId, { status: "error", progress: undefined, progressMsg: undefined });
-      showToast(error.message || `Failed to crawl ${url}`, "error");
+      handleApiError(error, `Failed to crawl ${url}`);
     } finally {
       setCrawling(false);
     }
-  }, [crawlUrl, crawling, currentUser?.email, loadUserDocuments, updateDoc, showToast]);
+  }, [crawlUrl, crawling, currentUser?.email, currentUser?.token, loadUserDocuments, updateDoc, handleApiError]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -892,7 +1146,7 @@ export default function App() {
               progress: progressData.progress,
               progressMsg: progressData.message,
             });
-          });
+          }, currentUser.token);
           updateDoc(doc.id, {
             status: "ready",
             chunks: result.chunks ?? result.chunkCount,
@@ -902,11 +1156,11 @@ export default function App() {
           showToast(`"${file.name}" indexed successfully`);
         } catch (error) {
           updateDoc(doc.id, { status: "error", progress: undefined, progressMsg: undefined });
-          showToast(error.message || `Failed to upload ${file.name}`, "error");
+          handleApiError(error, `Failed to upload ${file.name}`);
         }
       }
     },
-    [showToast, updateDoc],
+    [handleApiError, updateDoc, currentUser?.email, currentUser?.token],
   );
 
   const handleDrop = useCallback(
@@ -927,19 +1181,19 @@ export default function App() {
       setActiveDoc((currentId) => (currentId === id ? null : currentId));
 
       try {
-        await deleteDocument(currentUser?.email, docToRemove.name);
+        await deleteDocument(currentUser?.email, docToRemove.name, currentUser.token);
         showToast(`"${docToRemove.name}" deleted successfully.`);
       } catch (error) {
-        showToast(error.message || `Failed to delete ${docToRemove.name}`, "error");
+        handleApiError(error, `Failed to delete ${docToRemove.name}`);
       }
     },
-    [docs, currentUser?.email, showToast],
+    [docs, currentUser?.email, currentUser?.token, handleApiError],
   );
 
   const sendMessage = useCallback(
     async (text) => {
       const question = (text ?? input).trim();
-      if (!question || loading || readyCount === 0) return;
+      if (!question || loading || (!isWidgetMode && readyCount === 0)) return;
 
       setInput("");
       setLoading(true);
@@ -959,7 +1213,7 @@ export default function App() {
           role: msg.role === "ai" ? "assistant" : "user",
           content: msg.text,
         }));
-        const data = await askQuestion(question, currentUser?.email, history);
+        const data = await askQuestion(question, currentUser?.email, history, currentUser.token, currentUser?.widgetKey);
         setMessages((currentMessages) => [
           ...currentMessages,
           {
@@ -972,12 +1226,12 @@ export default function App() {
           },
         ]);
       } catch (error) {
-        showToast(error.message || "Failed to get response", "error");
+        handleApiError(error, "Failed to get response");
       } finally {
         setLoading(false);
       }
     },
-    [input, loading, readyCount, showToast],
+    [input, loading, readyCount, handleApiError, messages, currentUser?.email, currentUser?.token, isWidgetMode],
   );
 
   const handleInputChange = useCallback((event) => {
@@ -996,21 +1250,20 @@ export default function App() {
     [sendMessage],
   );
 
-  const handleSignOut = useCallback(() => {
-    setCurrentUser(null);
-    setMessages([]);
-    setDocs([]);
-    setInput("");
-  }, []);
+
+  if (currentPath === "/pricing") {
+    return (
+      <>
+        <PricingPage onBack={() => navigateTo("/")} currentUser={currentUser} />
+        <Toast toast={toast} />
+      </>
+    );
+  }
 
   if (!currentUser) {
     return (
       <>
-        <LoginPage
-          onLogin={setCurrentUser}
-          onSignup={() => showToast("Workspace signup is not connected yet.", "error")}
-          onForgotPassword={() => showToast("Password reset is not connected yet.", "error")}
-        />
+        <LoginPage onLogin={setCurrentUser} onNavigate={navigateTo} />
         <Toast toast={toast} />
       </>
     );
@@ -1018,64 +1271,91 @@ export default function App() {
 
   return (
     <>
-      <div className="app">
-        <div className={`sidebar-overlay${sidebarOpen ? " open" : ""}`} onClick={() => setSidebarOpen(false)} />
+      <div className={`app${isWidgetMode ? " widget-mode" : ""}`}>
+        {!isWidgetMode && <div className={`sidebar-overlay${sidebarOpen ? " open" : ""}`} onClick={() => setSidebarOpen(false)} />}
 
-        <Sidebar
-          activeDoc={activeDoc}
-          docs={docs}
-          dragOver={dragOver}
-          onClose={() => setSidebarOpen(false)}
-          onDragLeave={() => setDragOver(false)}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragOver(true);
-          }}
-          onDrop={handleDrop}
-          onFilesSelected={handleFiles}
-          onRemoveDoc={removeDoc}
-          onSelectDoc={(id) => setActiveDoc((currentId) => (currentId === id ? null : id))}
-          sidebarOpen={sidebarOpen}
-          crawlUrl={crawlUrl}
-          crawling={crawling}
-          onCrawlUrlChange={setCrawlUrl}
-          onCrawlSubmit={handleCrawlSubmit}
-        />
+        {!isWidgetMode && (
+          <Sidebar
+            activeDoc={activeDoc}
+            docs={docs}
+            dragOver={dragOver}
+            onClose={() => setSidebarOpen(false)}
+            onDragLeave={() => setDragOver(false)}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragOver(true);
+            }}
+            onDrop={handleDrop}
+            onFilesSelected={handleFiles}
+            onRemoveDoc={removeDoc}
+            onSelectDoc={(id) => setActiveDoc((currentId) => (currentId === id ? null : id))}
+            sidebarOpen={sidebarOpen}
+            crawlUrl={crawlUrl}
+            crawling={crawling}
+            onCrawlUrlChange={setCrawlUrl}
+            onCrawlSubmit={handleCrawlSubmit}
+          />
+        )}
 
         <main className="main">
-          <div className="mobile-header">
-            <div className="mobile-logo">
-              <div className="logo-dot" />
-              DocMind
+          {!isWidgetMode && (
+            <div className="mobile-header">
+              <div className="mobile-logo">
+                <div className="logo-dot" />
+                DocMind
+              </div>
+              <HeaderActions
+                mobile
+                messagesCount={messages.length}
+                onClearChat={() => setMessages([])}
+                onOpenSidebar={() => setSidebarOpen(true)}
+                readyCount={readyCount}
+                user={currentUser}
+                onSignOut={handleSignOut}
+                isWidgetMode={isWidgetMode}
+                onNavigate={navigateTo}
+              />
             </div>
-            <HeaderActions
-              mobile
-              messagesCount={messages.length}
-              onClearChat={() => setMessages([])}
-              onOpenSidebar={() => setSidebarOpen(true)}
-              readyCount={readyCount}
-              user={currentUser}
-              onSignOut={handleSignOut}
-            />
-          </div>
+          )}
 
           <div className="chat-header">
-            <div>
-              <div className="chat-title">AI Support Chat</div>
-              <div className="chat-subtitle">
-                {readyCount === 0 ? "Upload documents to begin" : `${readyCount} document${readyCount !== 1 ? "s" : ""} indexed`}
+            {isWidgetMode ? (
+              <div>
+                <div className="chat-title">AI Support Assistant</div>
+                <div className="chat-subtitle">
+                  <span className="widget-status-dot" /> Online & ready
+                </div>
               </div>
-            </div>
-            <HeaderActions
-              messagesCount={messages.length}
-              onClearChat={() => setMessages([])}
-              readyCount={readyCount}
-              user={currentUser}
-              onSignOut={handleSignOut}
-            />
+            ) : (
+              <div>
+                <div className="chat-title">AI Support Chat</div>
+                <div className="chat-subtitle">
+                  {readyCount === 0 ? "Upload documents to begin" : `${readyCount} document${readyCount !== 1 ? "s" : ""} indexed`}
+                </div>
+              </div>
+            )}
+            
+            {isWidgetMode ? (
+              messages.length > 1 && (
+                <button className="icon-btn" type="button" onClick={() => setMessages([])} aria-label="Clear chat" title="Clear chat">
+                  <TrashIcon />
+                </button>
+              )
+            ) : (
+              <HeaderActions
+                messagesCount={messages.length}
+                onClearChat={() => setMessages([])}
+                readyCount={readyCount}
+                user={currentUser}
+                onSignOut={handleSignOut}
+                onOpenEmbed={() => setEmbedModalOpen(true)}
+                isWidgetMode={isWidgetMode}
+                onNavigate={navigateTo}
+              />
+            )}
           </div>
 
-          {hasProcessingDocs && (
+          {hasProcessingDocs && !isWidgetMode && (
             <div className="processing-bar">
               <div className="processing-fill" />
             </div>
@@ -1088,16 +1368,25 @@ export default function App() {
           )}
 
           <ChatInput
-            disabled={!input.trim() || loading || readyCount === 0}
+            disabled={(!isWidgetMode && readyCount === 0) || loading}
             input={input}
             loading={loading}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             onSend={() => sendMessage()}
-            readyCount={readyCount}
+            readyCount={isWidgetMode ? 1 : readyCount}
           />
         </main>
       </div>
+
+      {!isWidgetMode && (
+        <EmbedModal 
+          isOpen={embedModalOpen} 
+          onClose={() => setEmbedModalOpen(false)} 
+          email={currentUser?.email} 
+          token={currentUser?.token}
+        />
+      )}
 
       <Toast toast={toast} />
     </>
